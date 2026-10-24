@@ -1,0 +1,11 @@
+# Machine-local: toolchain, signing key, venv, TV backups and screenshots (they hold serials, Wi-Fi
+# names and watch history). Never commit these.
+.local/
+*.keystore
+*.jks
+*.apk
+*.idsig
+launcher/build/
+launcher/build.log
+__pycache__/
+.DS_Store

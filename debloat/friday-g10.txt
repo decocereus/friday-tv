@@ -1,0 +1,65 @@
+# Friday: TCL C6KS, Google TV, board G10 (product G10_4K_GB), Realtek, Android 12, build STT2.230203.001.
+# Everything is DISABLED for user 0, never uninstalled. Original states are recorded before any change.
+#
+# Apply:   scripts/debloat.sh            (runs CleanYourTV's disable.sh on this list)
+# Undo:    scripts/restore-debloat.sh    (puts every package back to its recorded state)
+#
+# Built from CleanYourTV's TCL lists (examples/tcl-55c7k-uk and others), xMazaki/unbloat-android-tv's
+# ads/telemetry list, and Friday's own package inventory.
+#
+# Kept on purpose: everything behind picture/sound modes, Dolby, game mode and inputs (com.tcl.tv,
+# com.tcl.tvinput, com.tcl.systemserver, com.tcl.suspension, com.tcl.dashboard, com.tcl.gamebar,
+# com.tcl.globalkeyoverlay, com.tcl.providers.config, com.tcl.initsetup, com.tcl.useragreement,
+# com.tcl.factory.view, com.tcl.autopair, com.tcl.hearaid, com.tcl.t_solo, com.realtek.*), AirPlay
+# (com.tcl.airplay2, com.realtek.airplay2), Chromecast (com.google.android.apps.mediashell), the phone
+# remote and remote mic (com.google.android.tv.remote.service), Google Assistant voice
+# (com.google.android.katniss), Play Store and Play services, Miracast, USB media player, and every
+# streaming app.
+#
+# Firmware updates: com.tcl.ttvs is also TCL's system updater. To check for an update, run
+# scripts/check-tcl-update.sh, which enables it, opens System Update, and lets you disable it again.
+
+# TCL tracking and analytics
+com.tcl.ttvs                           # Samba TV ACR viewing tracking, TCL BI analytics, Alexa core, firmware updater
+tv.samba.ssm.ui                        # Samba TV: identifies what is on screen for ad targeting
+com.tcl.logkit                         # log capture and upload
+com.tcl.usercenter                     # TCL account sign-in nags
+
+# TCL content, ads and promos
+com.tcl.channelplus                    # TCL Live FAST channels
+com.tcl.tv.tclhome_passive             # pushes TCL content to the home screen at boot
+com.tcl.partnercustomizer              # TCL tweaks to Google TV home rows
+com.tcl.interactive                    # TCL TIAS background service
+com.tcl.messagebox                     # TCL push messages and promos
+com.tcl.waterfall.overseas             # TCL movie/show recommendation browser
+com.tcl.browser                        # TCL Browser: publishes news promos into Watch Next
+
+# Retail demo
+com.tcl.exhibit
+com.tcl.esticker
+
+# Preloaded apps and services
+com.tcl.ocean.instructions             # e-manual
+com.tcl.repairguide
+com.tcl.smartalexa                     # Alexa
+com.tcl.guard                          # TCL "cleaner" / app manager
+android.autoinstalls.config.google.gtvpai   # silently installs partner apps
+com.google.android.partnersetup        # partner attribution
+com.google.android.feedback            # feedback reports to Google
+com.google.android.onetimeinitializer  # first-boot initializer, already done
+com.google.android.play.games
+com.google.android.videos              # Google TV movies/shows store
+com.android.printspooler               # printing
+
+# Google TV's ambient screensaver (promos). The screensaver is switched to Friday Home's own photo
+# screensaver first (scripts/debloat.sh does this).
+com.google.android.apps.tv.dreamx
+
+# NOT disabled, tried on 2026-10-24 and reverted:
+# - com.google.android.apps.tv.launcherx: TCL's system_server hard-codes it as the boot Home package
+#   (TclFirstAppStartController homePkg). With it disabled, setupwraith's RecoveryActivity takes Home
+#   and loops start/finish on a black screen.
+# - com.google.android.tungsten.setupwraith: something in early boot re-enables it before adb is up,
+#   and the shell cannot disable its RecoveryActivity component alone on Android 12.
+# Instead launcherx stays enabled but may not run in the background (appops), its notification
+# listener is removed, and Friday Home's accessibility helper takes the Home button.
