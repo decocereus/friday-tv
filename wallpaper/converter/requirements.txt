@@ -1,0 +1,6 @@
+# Install into .local/venv: .local/venv/bin/pip install -r wallpaper/converter/requirements.txt
+pillow==13.0.0
+lz4==4.4.5
+numpy==2.5.4
+moderngl==5.13.0
+pytest==9.1.1

@@ -47,6 +47,8 @@ final class Store {
     boolean mediaRows;
     /** Letter shown in the account badge (Google doesn't let other apps read the account name). */
     String accountLetter;
+    /** Backdrop: "" for the photo slideshow, otherwise a wallpaper bundle's id. */
+    String wallpaper;
     /** Names the user gave apps, by key. */
     final Map<String, String> renames = new LinkedHashMap<>();
 
@@ -80,6 +82,7 @@ final class Store {
                     .putBoolean("mediaRows", b.optBoolean("mediaRows", true))
                     .putString("renames", b.optString("renames", "{}"))
                     .putString("accountLetter", b.optString("accountLetter", ""))
+                    .putString("wallpaper", b.optString("wallpaper", ""))
                     .commit();
         } catch (JSONException ignored) { }
     }
@@ -132,6 +135,7 @@ final class Store {
         blurLevel = p.getInt("blurLevel", 2);
         mediaRows = p.getBoolean("mediaRows", true);
         accountLetter = p.getString("accountLetter", "");
+        wallpaper = p.getString("wallpaper", "");
         renames.clear();
         try {
             JSONObject r = new JSONObject(p.getString("renames", "{}"));
@@ -178,13 +182,15 @@ final class Store {
                 .putBoolean("mediaRows", mediaRows)
                 .putString("renames", r)
                 .putString("accountLetter", accountLetter)
+                .putString("wallpaper", wallpaper)
                 .apply();
         try {
             writeBackup(new JSONObject()
                     .put("dock", d).put("order", o).put("hidden", h).put("folders", all.toString())
                     .put("sounds", sounds)
                     .put("dynColor", dynColor).put("brightness", brightness).put("blurLevel", blurLevel)
-                    .put("mediaRows", mediaRows).put("renames", r).put("accountLetter", accountLetter));
+                    .put("mediaRows", mediaRows).put("renames", r).put("accountLetter", accountLetter)
+                    .put("wallpaper", wallpaper));
         } catch (JSONException ignored) { }
     }
 

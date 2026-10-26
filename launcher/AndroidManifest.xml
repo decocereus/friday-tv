@@ -23,11 +23,15 @@
         </intent>
     </queries>
 
+    <!-- usesCleartextTraffic is for the Mac's wallpaper service, plain HTTP on the LAN.
+         Everything fetched from the internet is https by policy: see ArtworkPolicy for app
+         artwork and the wallpaper module's Previews for Workshop previews. -->
     <application
         android:label="Friday Home"
         android:icon="@drawable/ic_launcher"
         android:banner="@drawable/banner"
         android:theme="@style/Theme.Haven"
+        android:usesCleartextTraffic="true"
         android:allowBackup="false">
 
         <activity
@@ -69,13 +73,19 @@
         <service
             android:name=".HavenDream"
             android:exported="true"
-            android:label="Friday nature photos"
+            android:label="Friday wallpaper"
             android:permission="android.permission.BIND_DREAM_SERVICE">
             <intent-filter>
                 <action android:name="android.service.dreams.DreamService" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </service>
+        <!-- The Mac picks a wallpaper through this; android.permission.DUMP keeps it to adb. -->
+        <receiver
+            android:name=".SetWallpaper"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+
         <activity android:name=".BootProbeActivity" android:exported="false"
             android:excludeFromRecents="true" android:noHistory="true" android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />

@@ -26,6 +26,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import home.friday.wallpaper.Backdrop;
+
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -33,7 +35,7 @@ import java.util.concurrent.Executors;
  * Rotating nature photos with a cross-fade and a slow zoom. Each slide also carries a blurred
  * copy that fades in behind the app grid and folders, like tvOS.
  */
-final class Slideshow {
+final class Slideshow implements Backdrop {
 
     interface Listener {
         /** {@code color} is the photo's main colour, for tinting the UI. */
@@ -90,18 +92,22 @@ final class Slideshow {
         return f;
     }
 
+    @Override public View view() {
+        return view;
+    }
+
     /** 0 = sharp photo, 1 = fully blurred. */
-    void setBlur(float f) {
+    @Override public void setBlur(float f) {
         blur = f;
         front.getChildAt(1).setAlpha(f);
         back.getChildAt(1).setAlpha(f);
     }
 
-    float getBlur() {
+    @Override public float getBlur() {
         return blur;
     }
 
-    void start() {
+    @Override public void start() {
         running = true;
         if (photos == null) return;
         if (zoom != null) zoom.resume();
@@ -111,13 +117,13 @@ final class Slideshow {
         else ui.postDelayed(next, Math.max(0, intervalMs - since));
     }
 
-    void pause() {
+    @Override public void pause() {
         running = false;
         ui.removeCallbacks(next);
         if (zoom != null) zoom.pause();
     }
 
-    void release() {
+    @Override public void release() {
         pause();
         bg.shutdownNow();
     }

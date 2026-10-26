@@ -10,7 +10,12 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/** Artwork is fetched only from the publishing app's own image hosts; other rows show their title. */
+/**
+ * Artwork is fetched only from the publishing app's own image hosts; other rows show their title.
+ *
+ * <p>Workshop previews are not app artwork and have no publishing package, so the wallpaper module
+ * keeps its own list under the same rules: see {@code home.friday.wallpaper.Previews}.
+ */
 final class ArtworkPolicy {
     private static final Set<String> NUVIO_HOSTS = new HashSet<>(Arrays.asList(
             "image.tmdb.org", "images.metahub.space", "img.metahub.space",

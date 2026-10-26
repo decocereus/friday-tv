@@ -30,8 +30,11 @@ rm -rf build && mkdir -p build/gen build/classes build/dex
 "$(tool aapt2)" compile --dir res -o build/res.zip
 "$(tool aapt2)" link -I "$JAR" --manifest AndroidManifest.xml \
     --min-sdk-version 26 --target-sdk-version 34 --java build/gen -o build/base.apk build/res.zip
+# Two source roots: Friday Home here, and the separable wallpaper module next door.
+WALLPAPER="${WALLPAPER_SRC:-../wallpaper/tv/src}"
 javac -nowarn -Xlint:-options --release 11 -classpath "$JAR" -encoding UTF-8 \
-    -d build/classes build/gen/home/friday/tv/R.java src/home/friday/tv/*.java
+    -d build/classes build/gen/home/friday/tv/R.java src/home/friday/tv/*.java \
+    "$WALLPAPER"/home/friday/wallpaper/*.java
 "$(tool d8)" --release --min-api 26 --lib "$JAR" --output build/dex $(find build/classes -name '*.class')
 cp build/base.apk build/unsigned.apk
 (cd build/dex && jar -uMf ../unsigned.apk classes.dex)

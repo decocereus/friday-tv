@@ -8,7 +8,7 @@
 # ads/telemetry list, and Friday's own package inventory.
 #
 # Kept on purpose: everything behind picture/sound modes, Dolby, game mode and inputs (com.tcl.tv,
-# com.tcl.tvinput, com.tcl.systemserver, com.tcl.suspension, com.tcl.dashboard, com.tcl.gamebar,
+# com.tcl.tvinput, com.tcl.systemserver, com.tcl.suspension, com.tcl.gamebar,
 # com.tcl.globalkeyoverlay, com.tcl.providers.config, com.tcl.initsetup, com.tcl.useragreement,
 # com.tcl.factory.view, com.tcl.autopair, com.tcl.hearaid, com.tcl.t_solo, com.realtek.*), AirPlay
 # (com.tcl.airplay2, com.realtek.airplay2), Chromecast (com.google.android.apps.mediashell), the phone
@@ -33,6 +33,7 @@ com.tcl.interactive                    # TCL TIAS background service
 com.tcl.messagebox                     # TCL push messages and promos
 com.tcl.waterfall.overseas             # TCL movie/show recommendation browser
 com.tcl.browser                        # TCL Browser: publishes news promos into Watch Next
+com.tcl.dashboard                      # "TCL Home": TCL's content home app (added 2026-10-24 on request)
 
 # Retail demo
 com.tcl.exhibit

@@ -10,8 +10,11 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.database.ContentObserver;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Rect;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
@@ -40,6 +43,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 
+import home.friday.wallpaper.Backdrop;
+import home.friday.wallpaper.WallpaperHost;
+import home.friday.wallpaper.WallpaperLibrary;
+import home.friday.wallpaper.WallpaperPicker;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -54,7 +62,7 @@ import java.util.concurrent.Executors;
  * A minimal, Apple TV-style home screen: rotating wallpaper, a dock of favourites, an app grid
  * with folders, and a wiggle-to-edit mode.
  */
-public class HomeActivity extends Activity {
+public class HomeActivity extends Activity implements WallpaperHost {
 
     private static final long WALL_INTERVAL_MS = 45_000;
     private static final int TILE_W = 144, TILE_H = 81, GAP = 22, SIDE = 48, GRID_COLS = 5;
@@ -87,12 +95,18 @@ public class HomeActivity extends Activity {
     private final Map<String, Apps.Entry> entries = new LinkedHashMap<>();
 
     private Store store;
-    private Slideshow slideshow;
+    private WallpaperLibrary wallpapers;
+    private WallpaperPicker picker;
+    private Backdrop backdrop, outgoing;
+    /** The wallpaper the live backdrop shows, "" for photos; not always {@code store.wallpaper}. */
+    private String backdropId = "";
+    /** Wallpapers that failed this session; retried after the user picks one again, or on a restart. */
+    private final Set<String> broken = new HashSet<>();
     private SoundPool sounds;
     private int tickId;
     private int screenH;
-    private FrameLayout root, overlay;
-    private View dim, creditBox, clockBox;
+    private FrameLayout root, overlay, backdropBox;
+    private View dim, creditBox, clockBox, topScrim, bottomScrim;
     private TextView creditTitle, creditLine, appsTitle, overlayTitle, hint;
     private ScrollView scroller;
     private HorizontalScrollView dockScroll;
@@ -124,6 +138,12 @@ public class HomeActivity extends Activity {
     // Some makers (TCL) only allow the bind once Haven is in the foreground, so try after a pause and retry.
 
     private final Runnable reload = this::reloadEntries;
+    /** The Mac chose a wallpaper while Home was running; the pref is already written. */
+    private final SetWallpaper.Listener wallpaperPushed = id -> {
+        store.wallpaper = id;
+        broken.remove(id);
+        rescanWallpapers();
+    };
     private final BroadcastReceiver pkgReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) {
             if (Intent.ACTION_PACKAGE_REMOVED.equals(i.getAction())
@@ -141,12 +161,15 @@ public class HomeActivity extends Activity {
         screenH = getResources().getDisplayMetrics().heightPixels;
         store = new Store(this);
         if (store.hasDock()) store.save(); // refresh the backup that survives "cleaner" apps wiping Haven's data
+        wallpapers = new WallpaperLibrary(this);
         sounds = new SoundPool.Builder().setMaxStreams(2).setAudioAttributes(new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()).build();
         tickId = sounds.load(this, R.raw.tick, 1);
         // Watch for "optimiser" apps resetting Haven's settings, even while Haven isn't running.
         buildLayout();
+        takeWallpaperExtra(getIntent());
+        rescanWallpapers();
 
         IntentFilter f = new IntentFilter();
         f.addAction(Intent.ACTION_PACKAGE_ADDED);
@@ -155,6 +178,7 @@ public class HomeActivity extends Activity {
         f.addDataScheme("package");
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(pkgReceiver, f, Context.RECEIVER_EXPORTED);
         else registerReceiver(pkgReceiver, f);
+        SetWallpaper.listen(wallpaperPushed);
         reloadEntries();
     }
 
@@ -169,7 +193,8 @@ public class HomeActivity extends Activity {
             if (observingPrograms) getContentResolver().unregisterContentObserver(programsChanged);
             observingPrograms = false;
         }
-        slideshow.start();
+        backdrop.start();
+        rescanWallpapers();
         loadContinue();
         // Top movies/shows rows were replaced by Continue watching (Watch Next from your apps).
     }
@@ -180,7 +205,7 @@ public class HomeActivity extends Activity {
         if (observingPrograms) getContentResolver().unregisterContentObserver(programsChanged);
         observingPrograms = false;
         ui.removeCallbacks(refreshPrograms);
-        slideshow.pause();
+        backdrop.pause();
         ui.removeCallbacks(idle);
         navigating = false;
         if (editKey != null) exitEdit();
@@ -188,7 +213,10 @@ public class HomeActivity extends Activity {
 
     @Override protected void onDestroy() {
         unregisterReceiver(pkgReceiver);
-        slideshow.release();
+        SetWallpaper.forget(wallpaperPushed);
+        picker.release();
+        dropOutgoing();
+        backdrop.release();
         sounds.release();
         bg.shutdownNow();
         img.shutdownNow();
@@ -197,14 +225,20 @@ public class HomeActivity extends Activity {
 
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        setIntent(intent);
         if (editKey != null) exitEdit();
         if (overlayId != null) closeFolder();
         if (searchOpen) closeSearch();
+        if (picker.isOpen()) picker.close();
+        exitWallpaperOnly();
+        takeWallpaperExtra(intent);
+        rescanWallpapers();
         goHome();
     }
 
     @Override public void onBackPressed() {
         if (editKey != null) exitEdit();
+        else if (picker.isOpen()) picker.close();
         else if (searchOpen && searchField.hasFocus() && !searchField.getText().toString().trim().isEmpty()) {
             // First Back after typing leaves the text box for the results, like Apple TV.
             hideKeyboard();
@@ -217,6 +251,12 @@ public class HomeActivity extends Activity {
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent e) {
+        // Any key brings Home back and goes no further, so it does not also act on the focused tile.
+        // Volume is the exception: it belongs to the TV, not to Home.
+        if (wallpaperOnly && !isVolumeKey(e.getKeyCode())) {
+            if (e.getAction() == KeyEvent.ACTION_DOWN) exitWallpaperOnly();
+            return true;
+        }
         if (e.getAction() == KeyEvent.ACTION_DOWN) {
             int k = e.getKeyCode();
             boolean dpad = k == KeyEvent.KEYCODE_DPAD_LEFT || k == KeyEvent.KEYCODE_DPAD_RIGHT
@@ -232,9 +272,10 @@ public class HomeActivity extends Activity {
             }
             ui.removeCallbacks(idle);
             ui.postDelayed(idle, 10_000);
+            if (picker.isOpen() && picker.onKey(k)) return true;
             if (editKey == null && (k == KeyEvent.KEYCODE_DPAD_LEFT || k == KeyEvent.KEYCODE_DPAD_RIGHT)
                     && keepInRow(k == KeyEvent.KEYCODE_DPAD_RIGHT)) return true;
-            if (editKey == null && !searchOpen && overlayId == null
+            if (editKey == null && !searchOpen && !picker.isOpen() && overlayId == null
                     && (k == KeyEvent.KEYCODE_DPAD_UP || k == KeyEvent.KEYCODE_DPAD_DOWN)
                     && stepRow(k == KeyEvent.KEYCODE_DPAD_UP)) return true;
             if (editKey != null) {
@@ -246,6 +287,12 @@ public class HomeActivity extends Activity {
                     showOptions(editKey);
                     return true;
                 }
+            }
+            // Play/Pause does nothing else on Home: nothing is playing behind the rows.
+            if (editKey == null && !searchOpen && !picker.isOpen() && overlayId == null
+                    && k == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
+                showWallpaperOnly();
+                return true;
             }
         }
         return super.dispatchKeyEvent(e);
@@ -346,19 +393,19 @@ public class HomeActivity extends Activity {
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
 
-        slideshow = new Slideshow(this, WALL_INTERVAL_MS, this::showCredit);
-        root.addView(slideshow.view, match());
+        backdropBox = new FrameLayout(this);
+        root.addView(backdropBox, match());
         // Wallpaper brightness (Haven Settings): a black shade over the photo.
         shade = new View(this);
         shade.setBackgroundColor(Color.BLACK);
         shade.setAlpha((100 - store.brightness) / 100f);
         root.addView(shade, match());
 
-        View topScrim = new View(this);
+        topScrim = new View(this);
         topScrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{0x99000000, 0x00000000}));
         root.addView(topScrim, new FrameLayout.LayoutParams(-1, dp(180), Gravity.TOP));
-        View bottomScrim = new View(this);
+        bottomScrim = new View(this);
         bottomScrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
                 new int[]{0xCC000000, 0x55000000, 0x00000000}));
         root.addView(bottomScrim, new FrameLayout.LayoutParams(-1, dp(260), Gravity.BOTTOM));
@@ -408,13 +455,8 @@ public class HomeActivity extends Activity {
 
         scroller.addView(content);
         scroller.setOnScrollChangeListener((v, x, y, ox, oy) -> {
-            float f = scrollFraction();
-            dim.setAlpha(f * 0.35f);
-            creditBox.setAlpha(1f - f);
-            if (overlayId == null && (blurAnim == null || !blurAnim.isRunning())) slideshow.setBlur(blurTarget());
-            // Fade the tabs and clock as the dock scrolls up underneath them; they return with the dock.
-            clockBox.setAlpha(1f - f);
-            topBar.setAlpha(1f - f);
+            applyChrome();
+            if (overlayId == null && (blurAnim == null || !blurAnim.isRunning())) backdrop.setBlur(blurTarget());
         });
         root.addView(scroller, match());
 
@@ -485,12 +527,22 @@ public class HomeActivity extends Activity {
         root.addView(hint, hlp);
 
         buildSearchOverlay();
+        picker = new WallpaperPicker(this, wallpapers, bg, img);
+        for (View v : picker.views()) root.addView(v, match());
+        // Last: the first backdrop reads the scroll position to pick its starting blur.
+        usePhotos(false);
         setContentView(root);
     }
 
     private void showCredit(String title, String line, int color) {
+        // A slideshow being faded out still finishes its last decode; only the live one may write here.
+        if (!backdropId.isEmpty()) return;
         photoColor = color;
         Ui.setAccent(store.dynColor ? Ui.accentFrom(color) : Color.WHITE);
+        setCredit(title, line);
+    }
+
+    private void setCredit(String title, String line) {
         creditTitle.setText(title);
         creditLine.setText(line);
         creditTitle.setAlpha(0f);
@@ -505,6 +557,7 @@ public class HomeActivity extends Activity {
 
     /** Blurred while scrolled down, while navigating, or under a folder; scaled by the blur setting. */
     private float blurTarget() {
+        if (wallpaperOnly) return 0f;
         if (overlayId != null) return 1f;
         float max = new float[]{0f, 0.5f, 0.75f, 1f}[Math.max(0, Math.min(3, store.blurLevel))];
         return Math.max(scrollFraction(), navigating ? 1f : 0f) * max;
@@ -512,14 +565,163 @@ public class HomeActivity extends Activity {
 
     private void updateBlur(boolean animate) {
         if (animate) animateBlur(blurTarget());
-        else slideshow.setBlur(blurTarget());
+        else backdrop.setBlur(blurTarget());
     }
 
     private void animateBlur(float to) {
         if (blurAnim != null) blurAnim.cancel();
-        blurAnim = ValueAnimator.ofFloat(slideshow.getBlur(), to).setDuration(to < slideshow.getBlur() ? 900 : 300);
-        blurAnim.addUpdateListener(a -> slideshow.setBlur((float) a.getAnimatedValue()));
+        blurAnim = ValueAnimator.ofFloat(backdrop.getBlur(), to).setDuration(to < backdrop.getBlur() ? 900 : 300);
+        blurAnim.addUpdateListener(a -> backdrop.setBlur((float) a.getAnimatedValue()));
         blurAnim.start();
+    }
+
+    // ---------------------------------------------------------------- wallpaper only
+
+    /** 1 = Home's rows, bars and scrims are on screen, 0 = only the wallpaper. */
+    private float chrome = 1f;
+    private boolean wallpaperOnly;
+    private ValueAnimator chromeAnim;
+
+    private void applyChrome() {
+        float f = scrollFraction();
+        dim.setAlpha(chrome * f * 0.35f);
+        creditBox.setAlpha(1f - f);
+        scroller.setAlpha(chrome);
+        topScrim.setAlpha(chrome);
+        bottomScrim.setAlpha(chrome);
+        // Fade the tabs and clock as the dock scrolls up underneath them; they return with the dock.
+        clockBox.setAlpha(chrome * (1f - f));
+        topBar.setAlpha(chrome * (1f - f));
+    }
+
+    private static boolean isVolumeKey(int k) {
+        return k == KeyEvent.KEYCODE_VOLUME_UP || k == KeyEvent.KEYCODE_VOLUME_DOWN
+                || k == KeyEvent.KEYCODE_VOLUME_MUTE || k == KeyEvent.KEYCODE_MUTE;
+    }
+
+    private void showWallpaperOnly() {
+        if (wallpaperOnly || editKey != null || searchOpen || picker.isOpen() || overlayId != null) return;
+        wallpaperOnly = true;
+        ui.removeCallbacks(idle);
+        navigating = false;
+        fadeChrome(0f);
+        updateBlur(true);
+    }
+
+    private void exitWallpaperOnly() {
+        if (!wallpaperOnly) return;
+        wallpaperOnly = false;
+        fadeChrome(1f);
+        updateBlur(true);
+    }
+
+    private void fadeChrome(float to) {
+        if (chromeAnim != null) chromeAnim.cancel();
+        chromeAnim = ValueAnimator.ofFloat(chrome, to).setDuration(300);
+        chromeAnim.addUpdateListener(a -> {
+            chrome = (float) a.getAnimatedValue();
+            applyChrome();
+        });
+        chromeAnim.start();
+    }
+
+    // ---------------------------------------------------------------- backdrop
+
+    /** What to show behind the rows: "" for photos when nothing is chosen, it is gone, or it failed. */
+    private String wantedWallpaper() {
+        String id = store.wallpaper;
+        if (id.isEmpty() || broken.contains(id)) return "";
+        return wallpapers.byId(id) != null ? id : "";
+    }
+
+    private void rescanWallpapers() {
+        wallpapers.scan(bg, () -> {
+            applyWallpaper(true);
+            picker.refresh();
+        });
+    }
+
+    private void applyWallpaper(boolean fade) {
+        String id = wantedWallpaper();
+        if (backdrop != null && id.equals(backdropId)) return;
+        if (id.isEmpty()) {
+            usePhotos(fade);
+            return;
+        }
+        WallpaperLibrary.Entry e = wallpapers.byId(id);
+        backdropId = id;
+        setBackdrop(WallpaperLibrary.backdrop(this, e, () -> wallpaperFailed(id)), fade);
+        setCredit(e.title, "");
+        tintFromPreview(e);
+    }
+
+    private void usePhotos(boolean fade) {
+        backdropId = "";
+        setBackdrop(new Slideshow(this, WALL_INTERVAL_MS, this::showCredit), fade);
+    }
+
+    private void wallpaperFailed(String id) {
+        if (!id.equals(backdropId)) return;
+        WallpaperLibrary.Entry e = wallpapers.byId(id);
+        broken.add(id);
+        Toast.makeText(this, "Couldn't play " + (e != null ? e.title : id), Toast.LENGTH_SHORT).show();
+        usePhotos(true);
+    }
+
+    /** Cross-fades to {@code next}. The old backdrop stops decoding before the new one prepares. */
+    private void setBackdrop(Backdrop next, boolean fade) {
+        dropOutgoing();
+        Backdrop old = backdrop;
+        if (old != null) old.pause();
+        backdrop = next;
+        View v = next.view();
+        v.setAlpha(old != null && fade ? 0f : 1f);
+        backdropBox.addView(v, match());
+        next.setBlur(old != null ? old.getBlur() : blurTarget());
+        if (resumed) next.start();
+        if (old == null) return;
+        if (!fade) {
+            backdropBox.removeView(old.view());
+            old.release();
+            return;
+        }
+        outgoing = old;
+        v.animate().alpha(1f).setDuration(700).withEndAction(this::dropOutgoing).start();
+    }
+
+    private void dropOutgoing() {
+        Backdrop b = outgoing;
+        outgoing = null;
+        if (b == null) return;
+        backdropBox.removeView(b.view());
+        b.release();
+    }
+
+    /** Accent from the wallpaper's preview, the way the slideshow takes it from a photo. */
+    private void tintFromPreview(WallpaperLibrary.Entry e) {
+        bg.execute(() -> {
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inSampleSize = 4;
+            Bitmap b = BitmapFactory.decodeFile(e.preview.getAbsolutePath(), o);
+            int avg = b == null ? Color.WHITE : Ui.averageColor(new BitmapDrawable(getResources(), b));
+            ui.post(() -> {
+                if (!e.id.equals(backdropId)) return;
+                photoColor = avg;
+                Ui.setAccent(store.dynColor ? Ui.accentFrom(avg) : Color.WHITE);
+            });
+        });
+    }
+
+    /** {@code --es friday.wallpaper <id|photos>}, how the Mac's push script selects a wallpaper. */
+    private void takeWallpaperExtra(Intent i) {
+        String want = i != null ? i.getStringExtra("friday.wallpaper") : null;
+        if (want == null) return;
+        i.removeExtra("friday.wallpaper"); // consumed, so a later recreate() does not re-apply it
+        String id = want.trim();
+        if ("photos".equals(id)) id = "";
+        store.wallpaper = id;
+        store.save();
+        broken.remove(id);
     }
 
     // ---------------------------------------------------------------- entries and placement
@@ -745,7 +947,7 @@ public class HomeActivity extends Activity {
         return tile;
     }
 
-    private void tick() {
+    @Override public void tick() {
         if (store.sounds && SystemClock.uptimeMillis() - lastKeyAt < 300) sounds.play(tickId, 0.35f, 0.35f, 0, 0, 1f);
     }
 
@@ -1244,15 +1446,66 @@ public class HomeActivity extends Activity {
         return p;
     }
 
+    // ---------------------------------------------------------------- wallpaper picker
 
+    // The picker, the browser and the bundle formats live in the wallpaper module
+    // (wallpaper/tv); Home implements WallpaperHost and keeps the selection.
 
+    @Override public Activity activity() {
+        return this;
+    }
 
+    @Override public String selected() {
+        return store.wallpaper;
+    }
 
+    @Override public void select(String id) {
+        store.wallpaper = id;
+        store.save();
+        broken.remove(id);
+        applyWallpaper(true);
+    }
 
+    @Override public void rescanLibrary() {
+        rescanWallpapers();
+    }
 
+    @Override public void toast(String text) {
+        Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+    }
 
+    @Override public void overlayOpened() {
+        scroller.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        topBar.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+    }
 
+    @Override public void overlayClosed() {
+        scroller.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        topBar.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        focusLater(Apps.HAVEN_SETTINGS);
+    }
 
+    @Override public void focus(View tile, boolean has, float scale) {
+        Ui.focus(tile, has, scale);
+    }
+
+    @Override public void style(FrameLayout tile, int wDp, int hDp) {
+        tile.setOutlineProvider(Ui.rounded(dp(12)));
+        tile.setClipToOutline(true);
+        tile.setElevation(dp(2));
+        tile.setCameraDistance(8000 * getResources().getDisplayMetrics().density);
+        Ui.addGloss(tile, wDp, hDp);
+    }
+
+    @Override public TextView text(String s, int sp, int weight) {
+        return Ui.text(this, s, sp, weight == WallpaperHost.LIGHT ? Ui.light
+                : weight == WallpaperHost.MEDIUM ? Ui.medium
+                : weight == WallpaperHost.SEMIBOLD ? Ui.semibold : Ui.regular);
+    }
+
+    @Override public int accent() {
+        return Ui.accent;
+    }
 
     private void openNuvio() {
         Apps.Entry app = entries.get("com.nuvio.tv");
@@ -1691,6 +1944,11 @@ public class HomeActivity extends Activity {
 
     // ---------------------------------------------------------------- Friday settings
 
+    private String wallpaperName() {
+        WallpaperLibrary.Entry e = store.wallpaper.isEmpty() ? null : wallpapers.byId(store.wallpaper);
+        return e != null ? e.title : "Photos";
+    }
+
     private void showHavenSettings() {
         List<String> names = new ArrayList<>();
         List<Runnable> acts = new ArrayList<>();
@@ -1702,6 +1960,10 @@ public class HomeActivity extends Activity {
         });
         names.add("Home button settings");
         acts.add(() -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        names.add("Wallpaper: " + wallpaperName());
+        acts.add(picker::open);
+        names.add("Show wallpaper only");
+        acts.add(this::showWallpaperOnly);
         names.add("Colours from wallpaper: " + (store.dynColor ? "On" : "Off"));
         acts.add(() -> {
             store.dynColor = !store.dynColor;

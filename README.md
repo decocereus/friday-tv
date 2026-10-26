@@ -13,6 +13,7 @@ every change has an undo.
 | Path | What it is |
 |---|---|
 | `launcher/` | **Friday Home**, a fork of [Haven](https://github.com/joydeepsjce/haven-tv). Continue watching from every installed app (Watch Next), favourites dock, inputs, full app grid, photo screensaver. No analytics, weather or trending feeds. |
+| `wallpaper/` | **Wallpaper**, a module of its own: the Mac-side converter and LAN service, and the TV-side library, picker and Workshop browser. See `wallpaper/README.md`. |
 | `debloat/friday-g10.txt` | The packages the cleanup disables, with the reason for each and what is kept on purpose. |
 | `scripts/` | Build, deploy, cleanup, undo and firmware-update scripts (below). |
 | `third_party/cleanyourtv` | [CleanYourTV](https://github.com/Gathin23/cleanyourtv), pinned. Its `disable.sh`, `restore.sh` and `tv.py` do the work on the TV. |
@@ -27,6 +28,9 @@ every change has an undo.
   (`launcher/src/home/friday/tv/ArtworkPolicy.java`). A card from any other app shows its title.
 - **Home button**: an accessibility helper (`HomeKeyService`) opens Friday Home. Google TV's launcher
   stays installed because TCL's firmware insists on it (see Known limits).
+- **Wallpaper**: a Wallpaper Engine wallpaper can play behind the rows instead of the photo
+  slideshow. The TV browses Steam Workshop and installs items by itself, through a small service on
+  the Mac that does the downloading and converting (`wallpaper/README.md`).
 
 ## Cleanup
 
@@ -73,4 +77,5 @@ committed. Updates to the installed launcher must be signed with the same key.
 [CleanYourTV](https://github.com/Gathin23/cleanyourtv) (TV tools and TCL package research, MIT),
 [unbloat-android-tv](https://github.com/xMazaki/unbloat-android-tv) (ads and telemetry list),
 [NuvioTV](https://github.com/NuvioMedia/NuvioTV) (Watch Next integration).
+[RePKG](https://github.com/notscuffed/repkg) (Wallpaper Engine PKG and TEX formats, MIT).
 Wallpaper credits are in `launcher/NOTICE.md`.

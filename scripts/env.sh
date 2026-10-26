@@ -11,4 +11,5 @@ ADB="$ANDROID_HOME/platform-tools/adb"
 ADB_PORT=5041
 PY="$LOCAL/venv/bin/python"
 TOOLS="$ROOT/third_party/cleanyourtv/tools"
+export ADB_VENDOR_KEYS="$TOOLS/adbkey/adbkey"  # the key this TV authorized
 tv() { "$PY" -I "$TOOLS/tv.py" "$@"; }
